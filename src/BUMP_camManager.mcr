@@ -7,6 +7,12 @@
 * 02-2021
 * 01-2022
 * Added Shutter parameters, reordered parameters, changed presets to common aspect ratios
+* 04-2026
+* feat: Restore scene state for the batch view
+* feat: Arrange batch views by  buttons up and down
+* feat: roll_Cams close event saves its position and size to an INI file.
+* feat: fn compareCamNames to sort camera names alphabetically.
+* feat: Resizes the Floater based on the height of its rollouts.
 * -------------------------------------------------------------------------------------------
 */
 macroScript BUMP_CamMngr
@@ -16,6 +22,13 @@ macroScript BUMP_CamMngr
 	silentErrors: false
 	icon:         #("extratools", 1)
 (
+	-- For holding batc view data
+	struct viewData (
+		name, enabled, overridePreset, startFrame, endFrame,
+		width, height, pixelAspect, outputFilename, 
+		camera, sceneStateName, presetFile
+	)
+	
 	struct camManagerTool
 	(
 		CamFloater,		
@@ -24,6 +37,18 @@ macroScript BUMP_CamMngr
 		roll_Cams,
 		roll_Batch,
 		roll_active,
+		
+		private
+		fn resizeFloater = 
+		(
+			local h=CamFloater.rollouts.count * 30 
+			for i in 1 to CamFloater.rollouts.count do (
+				if CamFloater.rollouts[i].open then h+= CamFloater.rollouts[i].height
+			)
+			local scale_dpi = ((dotNetClass "System.Drawing.Graphics").fromHwnd 0).dpiX / 100
+			CamFloater.size = [CamFloater.size[1], h / scale_dpi]
+		),
+		
 		private
 		/* CAMS ROLLOUT */
 		fn ui_cams =
@@ -33,20 +58,18 @@ macroScript BUMP_CamMngr
 				local roll_w = 250 --roll_Cams.width
 				local owner = if owner != undefined then owner
 				--------------------------------
-				group "Active Camera"
-				(
-					label lbl_cam "" align:#left height:25 offset:[0,5]
-				)
+				label lbl_001 "Active Cam:" align:#left across:2
+				label lbl_cam "" align:#left height:25
 				
 				group "Scene cameras"
 				(
-					listbox lst_cams "" height:8
+					listbox lst_cams "" height:20
 					button btn_prev_cam "<<" width:60 align:#left across:3
 						tooltip:"Previous camera"
 					button btn_s "Select" width:80 align:#center
 						tooltip:"Select active camera"
 					button btn_next_cam ">>" width:60 align:#right
-						tooltip: "Nex camera"
+						tooltip: "Next camera"
 				)
 				
 				button btn_1 "Refresh" height:25 width:(roll_w - 25)
@@ -149,7 +172,7 @@ macroScript BUMP_CamMngr
 				)
 				fn get_camprops cam =
 				(
-					if classOf cam == Physical then
+					if (isvalidnode cam) and classOf cam == Physical then
 					(
 						-- Lens
 						spn_fl.enabled = NOT cam.specify_fov
@@ -176,6 +199,7 @@ macroScript BUMP_CamMngr
 						spn_ev.value = cam.exposure_value
 					)
 				)
+				
 				/* DEPRECATED */
 				fn set_camprops cam =
 				(
@@ -242,15 +266,22 @@ macroScript BUMP_CamMngr
 					if isValidNode n then select n
 				)
 				/* LIST CAMERAS IN SCENE */
+				fn compareCamNames a b = case of (
+					(a.name < b.name): -1
+					(a.name > b.name): 1
+					default: 0
+				)
 				fn listCameras =
 				(
-					for cam in cameras collect #(cam, cam.name)
+					local ls = for cam in cameras where (isKindOf cam camera) and not cam.isHidden collect cam
+					qsort ls compareCamNames
+					ls
 				)
 				/* UPDATE CAMERA LIST */
 				fn relist_cams =
 				(
 					list_cam = listCameras()
-					lst_cams.items = for i in list_cam where (isKindOf i[1] camera) collect i[2]					
+					lst_cams.items = for cam in list_cam collect cam.name
 					-- local only_names = for i in list_cam where (isKindOf i[1] camera) collect i[2]
 					-- local only_cams  = for i in list_cam where (isKindOf i[1] camera) collect i[1]
 					-- lst_cams.items = only_names
@@ -258,7 +289,7 @@ macroScript BUMP_CamMngr
 				/* GET THE ACTIVE CAMERA */
 				fn change_active =
 				(
-					if active_cam == undefined then active_cam = getActiveCamera()			
+					if active_cam == undefined or not (isvalidnode active_cam) then active_cam = getActiveCamera()			
 					--active_cam = getActiveCamera()			
 					if active_cam != undefined then (						
 						-- camera properties
@@ -303,9 +334,19 @@ macroScript BUMP_CamMngr
 					get_output_values()
 					chk_ratio.checked = rendLockImageAspectRatio
 				)
-				on roll_Cams close do updateToolbarButtons()
+				
+				on roll_Cams close do (
+					updateToolbarButtons()
+					-- Save position to INI
+					local iniPath = getmaxinifile()
+					setINISetting iniPath "CamManager" "Position" (CamFloater.pos as string)
+					setINISetting iniPath "CamManager" "WindowsSize" (CamFloater.size as string)
+					if roll_Cams.open then setINISetting iniPath "CamManager" "RolloutOpened" "Cams"
+				)
+				
 				/* SELECT CAMERA */
 				on btn_s pressed do ( selCam active_cam )
+				
 				/* PREVIOUS CAMERA */
 				on btn_prev_cam pressed do
 				(
@@ -315,6 +356,7 @@ macroScript BUMP_CamMngr
 					
 					owner.roll_batch.view_settings()
 				)
+				
 				/* NEXT CAMERA */
 				on btn_next_cam pressed do
 				(
@@ -324,6 +366,7 @@ macroScript BUMP_CamMngr
 					
 					owner.roll_batch.view_settings()
 				)
+				
 				/* CHANGE ACTIVE CAMERA */
 				on lst_cams selected item do
 				(
@@ -332,6 +375,7 @@ macroScript BUMP_CamMngr
 					
 					owner.roll_batch.view_settings()	
 				)
+				
 				/* CAMERA PARAMETERS*/
 				-- Lens
 				on chk_fov changed state do
@@ -415,10 +459,22 @@ macroScript BUMP_CamMngr
 				on p8 pressed do preset	 ratios[8]
 				on p9 pressed do preset	 ratios[9]
 				on p10 pressed do preset ratios[10]	
+
+				on roll_Cams rolledUp state do (
+					if state == true do (
+						for i in 1 to CamFloater.rollouts.count do (
+							if CamFloater.rollouts[i] != roll_Cams do (
+								CamFloater.rollouts[i].open = false
+							)
+						)
+					)
+					resizeFloater()
+				)
 				/*------------------------------ ROLLOUT END ------------------------------*/
 			)
 			roll_Cams
 		),
+		
 		/* BATCH ROLLOUT */
 		fn ui_batch =
 		(
@@ -427,18 +483,20 @@ macroScript BUMP_CamMngr
 				local roll_w = 250
 				local owner = if owner != undefined then owner
 				--------------------------------
-				group "Batch views"
-				(
-					listbox lst_views "Batch Views" height:5
-					edittext txt_1 "View name" fieldWidth:(roll_w - 25) bold:true labelOnTop:true
-					edittext txt_3 "File name" fieldWidth:(roll_w - 25) labelOnTop:true
-					edittext txt_2 "Output" fieldWidth:(roll_w - 60) labelOnTop:true across:2
-					button btn_p "..." align:#right offset:[0,15] tooltip:"Change path"
-					checkbox chk_1 "Override output size in view" align:#left \
-											tooltip:"Set active render output size as view override"
-					button btn_v "Add View to batch" width:(roll_w - 80) height:25 align:#left across:2
-					button btn_rem "Delete" height:25 align:#right
-				)		
+				listbox lst_views "Batch Views" height:20  offset:[-10,0]
+				button btn_togleEnabled "☑️" width:24 height:25 tooltip:"Toggle enabled" offset:[108,-272]
+				button btn_up "↑" height:55 tooltip:"Move view up" offset:[108,45]
+				button btn_down "↓"  height:55 tooltip:"Move view down" offset:[108,0]
+				button btn_rem "❌" width:24 height:25 offset:[108,48]
+
+				edittext txt_1 "View name" fieldWidth:(roll_w - 25) bold:true labelOnTop:true  
+				edittext txt_3 "File name" fieldWidth:(roll_w - 25) labelOnTop:true
+				edittext txt_2 "Output" fieldWidth:(roll_w - 60) labelOnTop:true across:2
+				button btn_p "..." align:#right offset:[10,15] tooltip:"Change path"
+				checkbox chk_1 "Override output size in view" align:#left \
+										tooltip:"Set active render output size as view override"
+				button btn_v "Add View to batch" width:(roll_w - 80) height:25 align:#left
+
 				button btn_bup "Refresh" width:(roll_w - 70) height:25 align:#left
 				tooltip:"Update the views list"
 				button btn_b "Open Batch window" width:(roll_w - 70) height:25 align:#left
@@ -453,12 +511,14 @@ macroScript BUMP_CamMngr
 				(
 					local idx = FindItem lst.Items item
 					if idx != 0 then lst.selection = idx
-				)		
+				)
+				
 				/* SET VIEW OUT PATH */
 				fn SetViewPath the_view =
 				(
 					if view_path != undefined then the_view.outputFilename = view_path
 				)
+				
 				/* UPDATE BITMAP FILENAME */
 				fn update_Path cam: =
 				(
@@ -470,6 +530,28 @@ macroScript BUMP_CamMngr
 						txt_3.text = ""
 					)
 				)
+				
+				/* MOVE BUTTONS ENABLING */
+				fn lst_views_arange_buttons_enablig = (
+					index = lst_views.selection
+					if lst_views.items.count <= 1 then (
+						btn_up.enabled = false
+						btn_down.enabled = false
+					) else if index == 1 then (
+						btn_up.enabled = false
+						btn_down.enabled = true
+					) else if index == lst_views.items.count then (
+						btn_up.enabled = true
+						btn_down.enabled = false
+					) else (
+						btn_up.enabled = true
+						btn_down.enabled = true
+					)
+					local the_view = batchRenderMgr.GetView index
+					--btn_togleEnabled.state = the_view.enabled
+					btn_togleEnabled.caption = if the_view.enabled then "✅" else "☑️"
+				)
+				
 				/* LIST BATCH VIEWS */
 				fn list_views =
 				(
@@ -477,11 +559,13 @@ macroScript BUMP_CamMngr
 					local num = batchRenderMgr.numViews
 					local col = for i=1 to num collect (
 						local the_view = gv i
-						local st = if the_view.enabled then "[x] " else "[o] "
+						local st = if the_view.enabled then "[v] " else "[ ] "
 						st+the_view.name
 					)
 					lst_views.items = col
+					lst_views_arange_buttons_enablig()
 				)
+				
 				/* LOAD VIEW PROPS */
 				fn get_view_params index =
 				(
@@ -498,6 +582,9 @@ macroScript BUMP_CamMngr
 								txt_2.text = getFilenamePath the_view.outputFilename
 								txt_3.text = filenameFromPath the_view.outputFilename
 							)
+							-- restore scene state
+							local ssp = sceneStateMgr.GetParts the_view.sceneStateName
+							sceneStateMgr.Restore the_view.sceneStateName ssp
 						)
 						-- SET RENDER OUTPUT TO THE VIEW OVERRIDE, USEFUL TO SEE THE CROP FRAME ETC...
 						if the_view.overridePreset then (
@@ -509,9 +596,9 @@ macroScript BUMP_CamMngr
 					)
 					the_view
 				)
+				
 				/* LOAD VIEW PROPS */
-				fn view_settings =
-				(
+				fn view_settings = (
 					local temp_cam = owner.roll_Cams.active_cam
 					if (temp_cam != undefined) then (
 						txt_1.text = temp_cam.name + "-" + (rendImageAspectRatio as string)
@@ -522,7 +609,7 @@ macroScript BUMP_CamMngr
 							
 							local comp_filename = temp_cam.name + type
 							for i in owner.roll_Cams.list_cam do (
-								local n = i[2]
+								local n = i.name
 								local f = matchPattern filename pattern:("*"+n+"*")
 								if f then (
 									local filename_parse = findString filename n
@@ -536,6 +623,7 @@ macroScript BUMP_CamMngr
 						update_Path()
 					)
 				)
+				
 				/* ADD VIEW */
 				fn view_add =
 				(
@@ -553,6 +641,53 @@ macroScript BUMP_CamMngr
 						) else messageBox "View Already exist.\nChange name AND try again."
 					)
 				)
+				
+				/* MOVE VIEW UP/DOWN IN BATCH LIST */
+				fn move_view_index from_idx to_idx = (
+					if from_idx == to_idx or from_idx < 1 or to_idx < 1 then return false
+					local num = batchRenderMgr.numViews
+					if from_idx > num or to_idx > num then return false
+						
+					local min_replace_indx = if from_idx > to_idx then to_idx else from_idx
+					
+					-- Collect views data
+					local views_data = for i = min_replace_indx to num collect (
+						local v = batchRenderMgr.GetView i
+						viewData v.name v.enabled v.overridePreset v.startFrame v.endFrame \
+							v.width v.height v.pixelAspect v.outputFilename v.camera \
+							v.sceneStateName v.presetFile
+					)
+					
+					-- Reorder the data array
+					local item = views_data[from_idx - min_replace_indx + 1]
+					deleteItem views_data (from_idx - min_replace_indx + 1)
+					insertItem item views_data (to_idx - min_replace_indx + 1)
+					
+					-- Delete views (from end to avoid index shift)
+					for i = num to min_replace_indx by -1 do batchRenderMgr.DeleteView i
+					
+					-- Recreate views in new order
+					for vd in views_data do (
+						local new_v = batchRenderMgr.CreateView vd.camera
+						if new_v != undefined then
+						(
+							if new_v.name != vd.name do new_v.name = vd.name
+							new_v.enabled = vd.enabled
+							new_v.overridePreset = vd.overridePreset
+							new_v.startFrame = vd.startFrame
+							new_v.endFrame = vd.endFrame
+							new_v.width = vd.width
+							new_v.height = vd.height
+							new_v.pixelAspect = vd.pixelAspect
+							new_v.outputFilename = vd.outputFilename
+							new_v.sceneStateName = vd.sceneStateName
+							new_v.presetFile = vd.presetFile
+						)
+					)
+
+					return true
+				)
+				
 				--------------------------------
 				on roll_batch open do
 				(
@@ -561,15 +696,23 @@ macroScript BUMP_CamMngr
 				)
 				
 				on roll_batch rolledUp state do (
-					if NOT state then (
-						owner.CamFloater.size.y -= roll_batch.height
-					) else (
-						owner.CamFloater.size.y += roll_batch.height
+					if state == true do (
+						for i in 1 to CamFloater.rollouts.count do (
+							if CamFloater.rollouts[i] != roll_batch do (
+								CamFloater.rollouts[i].open = false
+							)
+						)
 					)
+					resizeFloater()
 				)
+				
 				--------------------------------				
 				/* GET BATCH VIEW PARAMS */
-				on lst_views selected item do ( active_view = get_view_params item )
+				on lst_views selected index do (
+					active_view = get_view_params index
+					lst_views_arange_buttons_enablig()
+				)
+				
 				/* SET VIEW OUTPUT */
 				on btn_p pressed do
 				(
@@ -580,8 +723,10 @@ macroScript BUMP_CamMngr
 						)
 					)
 				)
+				
 				/* ADD VIEW */
 				on btn_v pressed do ( view_add() )
+				
 				/* DELETE VIEW */
 				on btn_rem pressed do
 				(
@@ -597,6 +742,7 @@ macroScript BUMP_CamMngr
 						)
 					)
 				)
+				
 				/* UPDATE BATCH VIEWS LIST */
 				on btn_bup pressed do
 				(
@@ -606,12 +752,59 @@ macroScript BUMP_CamMngr
 					active_view = undefined					
 					list_views()
 				)
+				
 				/* OPEN RENDER BATCH */
 				on btn_b pressed do (actionMan.executeAction -43434444 "4096")
+				
+				/* TOGGLE ENABLED */
+				on btn_togleEnabled pressed do (
+					local v = batchRenderMgr.GetView lst_views.selection
+					v.enabled = not v.enabled
+					list_views()
+				)
+				
+				/* MOVE VIEW UP */
+				on btn_up pressed do
+				(
+					if lst_views.selection > 0 and lst_views.selection > 1 then
+					(
+						local sel = lst_views.selection
+						if move_view_index sel (sel - 1) then
+						(
+							lst_views.selection = sel - 1
+							list_views()
+							active_view = batchRenderMgr.GetView (sel - 1)
+						)
+					)
+				)
+
+				/* MOVE VIEW DOWN */
+				on btn_down pressed do
+				(
+					if lst_views.selection > 0 and lst_views.selection < lst_views.items.count then
+					(
+						local sel = lst_views.selection
+						if move_view_index sel (sel + 1) then
+						(
+							lst_views.selection = sel + 1
+							list_views()
+							active_view = batchRenderMgr.GetView (sel + 1)
+						)
+					)
+				)
+				
+				on roll_Batch close do (
+					-- Save position to INI
+					if roll_Batch.open then (
+						local iniPath = getmaxinifile()
+						setINISetting iniPath "CamManager" "RolloutOpened" "Batch"
+					)
+				)
 				/*------------------------------ ROLLOUT END ------------------------------*/
 			)
 			roll_batch
 		),
+		
 		public
 		/* TOOL MAIN UI */
 		fn showUI =
@@ -629,9 +822,22 @@ macroScript BUMP_CamMngr
 					roll_Cams.owner = this
 					roll_Batch.owner = this
 					
-					CamFloater = newRolloutFloater "Camera Manager" 270 663 50 50 lockHeight:true lockWidth:true
-					addRollout roll_Cams  CamFloater border:false
-					addRollout roll_Batch CamFloater
+					-- Restore position from INI
+					local iniPath = getmaxinifile()
+					local posStr = getINISetting iniPath "CamManager" "Position"
+					local sizeStr = getINISetting iniPath "CamManager" "WindowsSize"
+					if posStr != "" and sizeStr != "" then
+					(
+						local p = execute posStr
+						local s = execute sizeStr
+						CamFloater = newRolloutFloater "Camera Manager" s[1] s[2] p[1] p[2] lockHeight:false lockWidth:true
+					) else (
+						CamFloater = newRolloutFloater "Camera Manager" dialog_width 663 50 50 lockHeight:false lockWidth:true
+					)
+					local rolloutOpened = getINISetting iniPath "CamManager" "RolloutOpened"
+					addRollout roll_Cams  CamFloater rolledup:(rolloutOpened != "Cams")
+					addRollout roll_Batch CamFloater rolledUp:(rolloutOpened != "Batch")
+
 					res = true
 				)
 			res
