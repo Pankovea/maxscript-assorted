@@ -544,7 +544,7 @@ macroScript BUMP_CamMngr
 				/* ENABLING MOVE BUTTONS */
 				fn lst_views_arange_buttons_enablig = (
 					index = lst_views.selection
-					if lst_views.items.count <= 1 then (
+					if lst_views.selection == 0 or lst_views.items.count <= 1 then (
 						btn_up.enabled = false
 						btn_down.enabled = false
 					) else if index == 1 then (
@@ -557,9 +557,18 @@ macroScript BUMP_CamMngr
 						btn_up.enabled = true
 						btn_down.enabled = true
 					)
-					local the_view = batchRenderMgr.GetView index
-					--btn_togleEnabled.state = the_view.enabled
-					btn_togleEnabled.caption = if the_view.enabled then "✅" else "☑️"
+					if index > 0 then (
+						local the_view = batchRenderMgr.GetView index
+						btn_togleEnabled.enabled = true
+						btn_rem.enabled = true
+						btn_togleEnabled.caption = if the_view.enabled then "✅" else "☑️"
+						btn_rem.caption = "❌"
+					) else (
+						btn_togleEnabled.enabled = false
+						btn_rem.enabled = false
+						btn_togleEnabled.caption = "✓"
+						btn_rem.caption = "x"
+					)
 				)
 				
 				/* LIST BATCH VIEWS */
