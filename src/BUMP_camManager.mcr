@@ -318,12 +318,22 @@ macroScript BUMP_CamMngr
 					if n != undefined then (
 						local cam = if (isKindOf n string) then ( getNodeByName n) else n
 						
+						-- search old active_cam
+						local store_old_active_cam = viewport.activeViewport
+						for i in 1 to viewport.numViews do (
+							if (viewport.getCamera index:i) == active_cam do (
+								viewport.activeViewport = i
+							)
+						)
+						
 						if isValidNode cam AND (isKindOf cam camera) then (
-							if viewport.CanSetToViewport cam then viewport.SetCamera cam				
+							if viewport.CanSetToViewport cam then viewport.SetCamera cam
+							viewport.activeViewport = store_old_active_cam
 							active_cam = cam
 							-- update
-							change_active()				
+							change_active()
 						)
+						
 					)
 				)
 				--------------------------------
@@ -495,7 +505,7 @@ macroScript BUMP_CamMngr
 				button btn_p "..." align:#right offset:[10,15] tooltip:"Change path"
 				checkbox chk_1 "Override output size in view" align:#left \
 										tooltip:"Set active render output size as view override"
-				button btn_v "Add View to batch" width:(roll_w - 80) height:25 align:#left
+				button btn_v "Add View to batch" width:(roll_w - 70) height:25 align:#left
 
 				button btn_bup "Refresh" width:(roll_w - 70) height:25 align:#left
 				tooltip:"Update the views list"
@@ -531,7 +541,7 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
-				/* MOVE BUTTONS ENABLING */
+				/* ENABLING MOVE BUTTONS */
 				fn lst_views_arange_buttons_enablig = (
 					index = lst_views.selection
 					if lst_views.items.count <= 1 then (
