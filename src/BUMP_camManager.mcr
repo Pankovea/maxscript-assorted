@@ -471,11 +471,9 @@ macroScript BUMP_CamMngr
 				on p10 pressed do preset ratios[10]	
 
 				on roll_Cams rolledUp state do (
-					if state == true do (
-						for i in 1 to CamFloater.rollouts.count do (
-							if CamFloater.rollouts[i] != roll_Cams do (
-								CamFloater.rollouts[i].open = false
-							)
+					for i in 1 to CamFloater.rollouts.count do (
+						if CamFloater.rollouts[i] != roll_Cams do (
+							CamFloater.rollouts[i].open = not state
 						)
 					)
 					resizeFloater()
@@ -494,21 +492,33 @@ macroScript BUMP_CamMngr
 				local owner = if owner != undefined then owner
 				--------------------------------
 				listbox lst_views "Batch Views" height:20  offset:[-10,0]
-				button btn_togleEnabled "☑️" width:24 height:25 tooltip:"Toggle enabled" offset:[108,-272]
-				button btn_up "↑" height:55 tooltip:"Move view up" offset:[108,45]
-				button btn_down "↓"  height:55 tooltip:"Move view down" offset:[108,0]
-				button btn_rem "❌" width:24 height:25 offset:[108,48]
-
-				edittext txt_1 "View name" fieldWidth:(roll_w - 25) bold:true labelOnTop:true  
-				edittext txt_3 "File name" fieldWidth:(roll_w - 25) labelOnTop:true
-				edittext txt_2 "Output" fieldWidth:(roll_w - 60) labelOnTop:true across:2
-				button btn_p "..." align:#right offset:[10,15] tooltip:"Change path"
-				checkbox chk_1 "Override output size in view" align:#left \
-										tooltip:"Set active render output size as view override"
-				button btn_v "Add View to batch" width:(roll_w - 70) height:25 align:#left
-
-				button btn_bup "Refresh" width:(roll_w - 70) height:25 align:#left
-				tooltip:"Update the views list"
+				
+				button btn_togleEnabled "☑️" align:#right width:24 height:25 tooltip:"Toggle enabled" offset:[14,-272]
+				button btn_up "↑" height:55 align:#right tooltip:"Move view up" offset:[14,37]
+				button btn_add_sep "—" width:24 align:#right tooltip:"Add separator" offset:[14,0]
+				button btn_down "↓"  height:55 align:#right tooltip:"Move view down" offset:[14,0]
+				button btn_dup "📋" width:24 height:25 align:#right offset:[14,0] tooltip:"Duplicate view" 
+				button btn_rem "❌" width:24 height:25 align:#right offset:[14,0]
+				
+				button btn_refresh "🔄️ Refresh" height:25 width:(roll_w - 40) align:#left offset:[-10,0] tooltip:"Update the views list" 
+				
+				checkbutton btn_net_render "🕸️ Net" width:50 height:25 align:#left offset:[-10,0]
+				button btn_render "🫖 Render" height:25 width:(roll_w - 90) align:#left offset:[40,-30]
+				
+				
+				group "Edit batch view" (
+					edittext txt_1 "View name" fieldWidth:(roll_w - 35) bold:true labelOnTop:true 
+					label lbl_res "Resolution"
+					edittext txt_2 "Output path" fieldWidth:(roll_w - 80) labelOnTop:true offset:[0,-18]
+					button btn_open_in_explorer "📂" align:#right width:40 offset:[5,-25]
+					edittext txt_3 "File name" fieldWidth:(roll_w - 80) labelOnTop:true
+					button btn_p "..." align:#right width:40 offset:[5,-25] tooltip:"Change path"
+					
+					checkbox chk_1 "Override output size in view" align:#left \
+											tooltip:"Set active render output size as view override"
+					dropdownlist drdwn_state "Scene State" items:#("---------------------")
+				)
+				button btn_v "➕ Add View to batch" width:(roll_w - 70) height:25 align:#left --offset:[0,13]
 				button btn_b "Open Batch window" width:(roll_w - 70) height:25 align:#left
 				--------------------------------
 				local batch_view
@@ -567,7 +577,7 @@ macroScript BUMP_CamMngr
 						btn_togleEnabled.enabled = false
 						btn_rem.enabled = false
 						btn_togleEnabled.caption = "✓"
-						btn_rem.caption = "x"
+						btn_rem.caption = "X"
 					)
 				)
 				
@@ -578,11 +588,21 @@ macroScript BUMP_CamMngr
 					local num = batchRenderMgr.numViews
 					local col = for i=1 to num collect (
 						local the_view = gv i
-						local st = if the_view.enabled then "[v] " else "[ ] "
-						st+the_view.name
+						local st
+						if substring the_view.name 1 5 == "-----" then (
+							st = ""
+						) else (
+							st = if the_view.enabled then "[v] " else "[ ] "
+						)
+						st + the_view.name
 					)
 					lst_views.items = col
 					lst_views_arange_buttons_enablig()
+										
+					states_names = for i in 1 to sceneStateMgr.getCount() collect (sceneStateMgr.GetSceneState i)
+					drdwn_state.items = #("---------------------") + states_names
+					
+					btn_net_render.checked = batchRenderMgr.netRender
 				)
 				
 				/* LOAD VIEW PROPS */
@@ -590,28 +610,42 @@ macroScript BUMP_CamMngr
 				(
 					local the_view = try (batchRenderMgr.GetView index) catch undefined
 					if the_view != undefined then (
+						disableSceneRedraw()
 						txt_1.text = the_view.name
 						local cam  = the_view.camera
 						if isValidNode cam then (
 							owner.roll_Cams.setActiveCam cam
 							-- SET CAM IN LIST
 							findItemInList cam.name owner.roll_Cams.lst_cams
-							-- Get the view Path
-							if the_view.outputFilename != undefined then (
-								txt_2.text = getFilenamePath the_view.outputFilename
-								txt_3.text = filenameFromPath the_view.outputFilename
-							)
-							-- restore scene state
+						)
+						-- Get the view Path
+						if the_view.outputFilename != "" then (
+							txt_2.text = getFilenamePath the_view.outputFilename
+							txt_3.text = filenameFromPath the_view.outputFilename
+						) else (
+							txt_2.text = ""
+							txt_3.text = ""
+						)
+						-- restore scene state
+						local i = finditem drdwn_state.items the_view.sceneStateName
+						drdwn_state.selection = if i == 0 then 1 else i
+						if the_view.sceneStateName != "" do (
 							local ssp = sceneStateMgr.GetParts the_view.sceneStateName
 							sceneStateMgr.Restore the_view.sceneStateName ssp
 						)
 						-- SET RENDER OUTPUT TO THE VIEW OVERRIDE, USEFUL TO SEE THE CROP FRAME ETC...
 						if the_view.overridePreset then (
+							chk_1.checked = true
 							renderWidth  = the_view.width
 							renderHeight = the_view.height
+							lbl_res.caption = renderWidth as string + " x " + renderHeight as string
 							owner.roll_Cams.get_output_values()
+						) else (
+							lbl_res.caption = "Default"
+							chk_1.checked = false
 						)
-						CompleteRedraw()
+						
+						enableSceneRedraw()
 					)
 					the_view
 				)
@@ -619,9 +653,9 @@ macroScript BUMP_CamMngr
 				/* LOAD VIEW PROPS */
 				fn view_settings = (
 					local temp_cam = owner.roll_Cams.active_cam
-					if (temp_cam != undefined) then (
+					if temp_cam != undefined then (
 						txt_1.text = temp_cam.name + "-" + (rendImageAspectRatio as string)
-						if (view_path != undefined) then (
+						if view_path != undefined then (
 							local root     = getFilenamePath view_path
 							local type     = getFilenameType view_path
 							local filename = filenameFromPath view_path
@@ -643,9 +677,25 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
+				/* CLOSE BATHCH WINDOW */
+				fn close_batch_window = (
+					-- https://help.autodesk.com/view/MAXDEV/2026/ENU/?guid=GUID-282F32AC-5A80-4FDB-B8C0-275D2CC15845
+					local batch_window = windows.getChildHWND 0 "Batch Render" parent:#max
+					
+					if batch_window != undefined \
+					and batch_window[4] == "#32770" \ -- window class (filter other windows named "Batch Render")
+					do (
+						windows.sendMessage batch_window[1] 0x0010 0 0  -- 0x0010 = WM_CLOSE
+						return true
+					)
+					
+					return false
+				)
+				
 				/* ADD VIEW */
 				fn view_add =
 				(
+					close_batch_window()
 					local temp_cam = owner.roll_Cams.active_cam
 					if temp_cam != undefined then (
 						if (batchRenderMgr.FindView txt_1.text) == 0 then (
@@ -661,9 +711,94 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
+				/* UPDATE VIEW FILE PATHS */
+				fn view_update =
+				(
+					if lst_views.selection != 0 do (
+						local bv = batchRenderMgr.GetView lst_views.selection
+						local any_changed = false
+						
+						-- Change the name
+						if bv.name != txt_1.text then (
+							if batchRenderMgr.FindView txt_1.text do (
+								messageBox "View Already exist.\nChange name AND try again."
+								return undefined
+							)
+							bv.name = txt_1.text
+							list_views()
+							any_changed = true
+						)
+						
+						-- Change path
+						if txt_2.text == "" or txt_3.text == "" then (
+							view_path = undefined
+							bv.outputFilename = undefined
+							txt_2.text = ""
+							txt_3.text = ""
+							any_changed = true
+						) else if doesfileexist txt_2.text then (
+							view_path = txt_2.text + txt_3.text
+							bv.outputFilename = view_path
+							any_changed = true
+						) else (
+							messageBox "Directory doesn't exists" title:"Error"
+							return undefined
+						)
+						
+						-- Change resolution
+						bv.overridePreset = chk_1.state
+						if chk_1.state do (
+							bv.width  = renderWidth
+							bv.height = renderHeight
+							any_changed = true
+						)
+						
+						-- Change Scene State
+						local selected_scene_state = if drdwn_state.selection > 1 then (
+							drdwn_state.items[drdwn_state.selection]) else ("")
+						
+						if selected_scene_state != bv.sceneStateName do (
+							bv.sceneStateName = selected_scene_state
+							any_changed = true
+						)
+						
+						if any_changed do close_batch_window()
+					)
+				)
+							
+				on txt_1 entered txt do view_update()
+				on txt_2 entered txt do view_update()
+				on txt_3 entered txt do view_update()
+				
+				on chk_1 changed state do (
+					if not state do lbl_res.caption = "Default"
+					view_update()
+				)
+				
+				on drdwn_state selected index do view_update()
+				
+				on btn_open_in_explorer pressed do (
+					if txt_2.text != "" then (
+						if doesfileexist txt_2.text then (
+							ShellLaunch "explorer.exe" ("\"" + txt_2.text + "\"")
+						) else messageBox "Directory doesn't exists" title:"Error"
+					)
+				)
+				
+				on btn_render pressed do (
+					batchRenderMgr.render()
+				)
+				
+				on btn_net_render changed state do (
+					close_batch_window()
+					batchRenderMgr.netRender = state
+				)
+				
 				/* MOVE VIEW UP/DOWN IN BATCH LIST */
 				fn move_view_index from_idx to_idx = (
+					close_batch_window()
 					if from_idx == to_idx or from_idx < 1 or to_idx < 1 then return false
+					
 					local num = batchRenderMgr.numViews
 					if from_idx > num or to_idx > num then return false
 						
@@ -710,12 +845,12 @@ macroScript BUMP_CamMngr
 				--------------------------------
 				on roll_batch open do
 				(
-					view_settings()
 					list_views()
+					lst_views.selection = 0
 				)
 				
 				on roll_batch rolledUp state do (
-					if state == true do (
+					if state do (
 						for i in 1 to CamFloater.rollouts.count do (
 							if CamFloater.rollouts[i] != roll_batch do (
 								CamFloater.rollouts[i].open = false
@@ -735,7 +870,13 @@ macroScript BUMP_CamMngr
 				/* SET VIEW OUTPUT */
 				on btn_p pressed do
 				(
-					if (view_path = getBitmapSaveFileName()) != undefined then (
+					if view_path != undefined then (
+						new_path = getBitmapSaveFileName filename:view_path
+					) else (
+						new_path = getBitmapSaveFileName()
+					)
+					if new_path != undefined then (
+						view_path = new_path
 						update_Path()
 						if active_view != undefined then (
 							SetViewPath active_view
@@ -755,15 +896,27 @@ macroScript BUMP_CamMngr
 							-- refresh list
 							batch_view  = undefined
 							view_name   = ""
-							--	view_path   = undefined
 							active_view = undefined
+							lst_views.selection = 0
 							list_views()
 						)
 					)
 				)
 				
+				/* DUPLICATE VIEW */
+				on btn_dup pressed do (
+					if lst_views.selection != 0 then (
+						batchRenderMgr.DuplicateView lst_views.selection
+						-- Reorder
+						move_view_index batchRenderMgr.numViews (lst_views.selection + 1)
+						lst_views.selection += 1
+						-- refresh list
+						list_views()
+					)
+				)
+				
 				/* UPDATE BATCH VIEWS LIST */
-				on btn_bup pressed do
+				on btn_refresh pressed do
 				(
 					batch_view  = undefined
 					view_name   = ""
@@ -773,13 +926,18 @@ macroScript BUMP_CamMngr
 				)
 				
 				/* OPEN RENDER BATCH */
-				on btn_b pressed do (actionMan.executeAction -43434444 "4096")
+				on btn_b pressed do (
+					actionMan.executeAction -43434444 "4096"
+				)
 				
 				/* TOGGLE ENABLED */
 				on btn_togleEnabled pressed do (
 					local v = batchRenderMgr.GetView lst_views.selection
-					v.enabled = not v.enabled
-					list_views()
+					if substring v.name 1 5 != "-----" then (
+						close_batch_window()
+						v.enabled = not v.enabled
+						list_views()
+					)
 				)
 				
 				/* MOVE VIEW UP */
@@ -796,7 +954,34 @@ macroScript BUMP_CamMngr
 						)
 					)
 				)
-
+				
+				/* ADD SEPARATOR */
+				on btn_add_sep pressed do (
+					local sep_name
+					local n = 0
+					do (
+						n += 1
+						sep_name = "----- " + n as string + " -----"
+					) while (
+						(batchRenderMgr.FindView sep_name) != 0
+					)
+					
+					local sep_view = batchRenderMgr.CreateView undefined
+					sep_view.name = sep_name
+					sep_view.enabled = false
+					
+					-- Reorder
+					if lst_views.selection > 0 then (
+						move_view_index batchRenderMgr.numViews (lst_views.selection + 1)
+						lst_views.selection += 1
+					) else (
+						lst_views.selection = batchRenderMgr.numViews
+					)
+					
+					list_views()
+					get_view_params lst_views.selection
+				)
+				
 				/* MOVE VIEW DOWN */
 				on btn_down pressed do
 				(
