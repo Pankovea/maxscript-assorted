@@ -518,6 +518,12 @@ macroScript BUMP_CamMngr
 											tooltip:"Set active render output size as view override"
 					dropdownlist drdwn_state "Scene State" items:#("---------------------")
 				)
+				group "Global Resolution Settings" (
+					label lbl_global_res "Global Resolution Scale: 100%" offset:[0,5]
+					slider sld_global_res "Scale" range:[1,7,4] type:#integer ticks:7 offset:[0,-5]
+					checkbox chk_apply_to_all "Apply to all views" checked:true offset:[0,5]
+					button btn_apply_res "Apply to Selected View" width:(roll_w - 40) height:25 offset:[0,5]
+				)
 				button btn_v "➕ Add View to batch" width:(roll_w - 70) height:25 align:#left --offset:[0,13]
 				button btn_b "Open Batch window" width:(roll_w - 70) height:25 align:#left
 				--------------------------------
@@ -526,19 +532,6 @@ macroScript BUMP_CamMngr
 				local view_path   = undefined
 				local active_view = undefined
 				--------------------------------
-				/* FIND ITEM IN LIST */
-				fn findItemInList item lst =
-				(
-					local idx = FindItem lst.Items item
-					if idx != 0 then lst.selection = idx
-				)
-				
-				/* SET VIEW OUT PATH */
-				fn SetViewPath the_view =
-				(
-					if view_path != undefined then the_view.outputFilename = view_path
-				)
-				
 				/* UPDATE BITMAP FILENAME */
 				fn update_Path cam: =
 				(
@@ -552,7 +545,8 @@ macroScript BUMP_CamMngr
 				)
 				
 				/* ENABLING MOVE BUTTONS */
-				fn lst_views_arange_buttons_enablig = (
+				-- [side-effect] Меняет enabled/caption у btn_up, btn_down, btn_togleEnabled, btn_rem
+				fn lst_views_update_buttons = (
 					index = lst_views.selection
 					if lst_views.selection == 0 or lst_views.items.count <= 1 then (
 						btn_up.enabled = false
@@ -582,6 +576,7 @@ macroScript BUMP_CamMngr
 				)
 				
 				/* LIST BATCH VIEWS */
+				-- [side-effect] Меняет lst_views.items, drdwn_state.items, btn_net_render.checked, UI кнопки
 				fn list_views =
 				(
 					local gv =  batchRenderMgr.GetView
@@ -597,7 +592,7 @@ macroScript BUMP_CamMngr
 						st + the_view.name
 					)
 					lst_views.items = col
-					lst_views_arange_buttons_enablig()
+					lst_views_update_buttons()
 										
 					states_names = for i in 1 to sceneStateMgr.getCount() collect (sceneStateMgr.GetSceneState i)
 					drdwn_state.items = #("---------------------") + states_names
@@ -605,51 +600,493 @@ macroScript BUMP_CamMngr
 					btn_net_render.checked = batchRenderMgr.netRender
 				)
 				
-				/* LOAD VIEW PROPS */
+				/* VIEW RESILUTION FUNCTIONS */
+
+				/* ============================================================
+				   ПРОЦЕНТЫ ДЛЯ СЛАЙДЕРА
+				   ============================================================ */
+
+				-- Массив доступных процентов
+				global g_scaleValues = #(0.25, 0.5, 0.666667, 1.0, 1.25, 1.5, 2.0)
+				-- Массив доступных пропорция изображения
+				global g_standardAspects = #(
+					1.0,
+					4.0/3.0, 3.0/2.0, 16.0/10.0, 16.0/9.0, 2.0, 21.0/9.0,
+					3.0/4.0, 2.0/3.0, 5.0/8.0, 9.0/16.0, 1.0/2.0
+				)
+				-- Допуск для определения близости к стандартной пропорции
+				global g_aspectTolerance = 0.01
+				-- Размер сетки и допуск для округления
+				global g_gridW = 32  -- для ширины
+				global g_gridH = 16   -- для высоты
+				global g_gridTolerance = 16  -- ±16 пикселей для ширины, ±8 для высоты
+
+				-- Вспомогательные функции округдения
+				-- Округлить число до ближайшего кратного
+				fn roundToNearestMultiple value multiple = (
+					if multiple <= 0 then return value
+					local remainder = mod value multiple
+					local half = multiple / 2.0
+					if remainder < half then return value - remainder
+					else return value + (multiple - remainder)
+				)
+
+				-- Проверить, можно ли округлить до кратного, и вернуть результат
+				-- Если разница ≤ tolerance — возвращает ближайшее кратное, иначе — исходное
+				fn tryRoundToMultiple value multiple tolerance = (
+					local nearest = roundToNearestMultiple value multiple
+					if abs(value - nearest) <= tolerance then nearest else value
+				)
+
+				-- Найти ближайшую стандартную пропорцию
+				fn findStandardAspect ratio = (
+					local closest = undefined
+					local minDiff = 999999.0
+					
+					for asp in g_standardAspects do (
+						local diff = abs(ratio - asp)
+						if diff < minDiff then (
+							minDiff = diff
+							closest = asp
+						)
+					)
+					
+					if closest != undefined and minDiff <= g_aspectTolerance then (
+						return closest
+					)
+					return undefined
+				)
+
+
+				-- Основная функция округления
+				-- Вычислить разрешение с умным округлением
+				fn calculateSmartResolution w h = (
+					local newW = w
+					local newH = h
+					
+					-- Шаг 1: Округляем ширину до кратного 16 (или 8 как запасной вариант)
+					newW = tryRoundToMultiple w g_gridW g_gridTolerance
+					if newW == w then newW = tryRoundToMultiple w 8 4
+					
+					-- Шаг 2: Проверяем пропорцию
+					local currentAspect = w as float / h as float
+					local stdAspect = findStandardAspect currentAspect
+					local useAspect = if stdAspect != undefined then stdAspect else currentAspect
+					newH = (newW / useAspect) as integer
+					
+					-- Округляем высоту до кратного 8
+					newH = tryRoundToMultiple newH g_gridH (g_gridTolerance/2)
+					
+					return #(newW, newH, stdAspect != undefined)
+				)
+
+				-- Получить процент по индексу слайдера
+				fn getPercentFromSlider = (
+					local idx = sld_global_res.value as integer
+					if idx < 1 then idx = 1
+					if idx > g_scaleValues.count then idx = g_scaleValues.count
+
+					return g_scaleValues[idx]
+				)
+
+				-- Получить ближайшее значение из списка
+				-- [side-effect] Может добавить значение в g_scaleValues и изменить sld_global_res.range
+				fn getClosestScaleValue percent = (
+					local closest = 1
+					local minDiff = 999999
+					
+					for val in g_scaleValues do (
+						local diff = abs(val - percent)
+						if diff < minDiff then (
+							minDiff = diff
+							closest = val
+						)
+					)
+					
+					-- Если разница больше допуска (0.05 = 5%), добавляем новое значение
+					if minDiff > 0.05 then (
+						append g_scaleValues percent
+						sort g_scaleValues
+						-- Обновляем диапазон слайдера
+						sld_global_res.range = [1, g_scaleValues.count, 1]
+						return percent
+					)
+					
+					return closest
+				)
+
+				-- Получить индекс слайдера по проценту (один проход)
+				-- [side-effect] Может добавить значение в g_scaleValues и изменить sld_global_res.range
+				fn getSliderIndexByPercent percent = (
+					local bestIdx = 1
+					local bestDiff = 999.0
+					for i = 1 to g_scaleValues.count do (
+						local diff = abs(g_scaleValues[i] - percent)
+						if diff < bestDiff then (
+							bestDiff = diff
+							bestIdx = i
+						)
+					)
+					-- Если разница больше допуска, добавляем значение в список
+					if bestDiff > 0.02 then (
+						append g_scaleValues percent
+						sort g_scaleValues
+						sld_global_res.range = [1, g_scaleValues.count, 1]
+						for i = 1 to g_scaleValues.count do (
+							if g_scaleValues[i] == percent then return i
+						)
+					)
+					return bestIdx
+				)
+
+				-- Обновить отображение
+				fn updateScaleDisplay percent = (
+					if percent == undefined then percent = 1
+					
+					-- Округляем до ближайшего значения из списка
+					local displayPercent = getClosestScaleValue percent
+					
+					lbl_global_res.text = "Global Resolution Scale: " + ((displayPercent * 100) as integer) as string + "%"
+					
+					-- Устанавливаем слайдер на нужный индекс
+					local idx = getSliderIndexByPercent displayPercent
+					sld_global_res.value = idx
+				)
+
+				/* ============================================================
+				   ФУНКЦИИ ДЛЯ РАБОТЫ С ИМЕНЕМ ВИДА
+				   ============================================================ */
+
+				-- Получить данные из имени: #(процент, ширина, высота)
+				fn getViewDataFromName viewName = (
+					local percent = 1
+					local w = 0
+					local h = 0
+					
+					if viewName == undefined or viewName == "" then return #(percent, w, h)
+					
+					local pattern = "\\((\\d+)%\\s+(\\d+)x(\\d+)\\)"
+					local regex = dotNetObject "System.Text.RegularExpressions.Regex" pattern
+					local match = regex.Match viewName
+					
+					if match.Success then (
+						percent = match.Groups.Item[1].Value
+						w = match.Groups.Item[2].Value as integer
+						h = match.Groups.Item[3].Value as integer
+					)
+					return #(percent, w, h)
+				)
+
+				-- Очистить имя от данных (процент и разрешение)
+				fn getCleanViewName viewName = (
+					if viewName == undefined or viewName == "" then return "View"
+					
+					local pattern = "\\s*\\(\\d+%\\s+\\d+x\\d+\\)\\s*$"
+					local regex = dotNetObject "System.Text.RegularExpressions.Regex" pattern
+					local cleanName = regex.Replace viewName ""
+					cleanName = trimRight cleanName
+					
+					return if cleanName == "" then "View" else cleanName
+				)
+
+				-- Проверить уникальность имени (исключая указанный вид)
+				fn isViewNameUnique viewName excludeView = (
+					local num = batchRenderMgr.numViews
+					for i = 1 to num do (
+						local v = batchRenderMgr.GetView i
+						if v != excludeView and v.name == viewName then return false
+					)
+					return true
+				)
+
+				-- Получить уникальное имя, если занято
+				fn getUniqueViewName baseName excludeView = (
+					local newName = baseName
+					local counter = 1
+					while not (isViewNameUnique newName excludeView) do (
+						newName = baseName + "_" + (counter as string)
+						counter += 1
+					)
+					return newName
+				)
+
+				-- Безопасно установить имя виду (с проверкой уникальности)
+				fn safeSetViewName the_view newName = (
+					if the_view == undefined then return false
+					if the_view.name == newName then return true  -- Имя не меняется
+					
+					-- Проверяем уникальность
+					if isViewNameUnique newName the_view then (
+						the_view.name = newName
+					) else (
+						-- Генерируем уникальное
+						local unique_name = getUniqueViewName (getCleanViewName newName) the_view
+						-- Добавляем данные обратно, если они были
+						local data = getViewDataFromName newName
+						if data[2] > 0 and data[3] > 0 then (
+							unique_name = unique_name + " (" + (data[1] as string) + "% " + (data[2] as string) + "x" + (data[3] as string) + ")"
+						)
+						the_view.name = unique_name
+					)
+					return true
+				)
+
+					
+			/* ============================================================
+			   ОСНОВНЫЕ ФУНКЦИИ РАБОТЫ С РАЗРЕШЕНИЕМ
+			   ============================================================ */
+
+			-- Применить масштаб к одному виду с умным округлением
+			-- [side-effect] Меняет the_view.width/height/name, renderWidth/renderHeight, lbl_res.text
+				fn applyScaleToView the_view percent = (
+					if the_view == undefined then return false
+					
+					-- Пропускаем виды без override — их размер задаётся в настройках рендера
+					if not the_view.overridePreset then return false
+					
+					percent = if percent == undefined then 1 else percent
+					
+					-- Получаем исходное разрешение (из имени или настроек)
+					local baseRes = (
+						local nd = getViewDataFromName the_view.name
+						if nd[2] > 0 and nd[3] > 0 then #(nd[2], nd[3])
+						else if the_view.overridePreset then #(the_view.width, the_view.height)
+						else #(renderWidth, renderHeight)
+					)
+					if baseRes[1] <= 0 or baseRes[2] <= 0 then (
+						baseRes = #(renderWidth, renderHeight)
+						if baseRes[1] <= 0 or baseRes[2] <= 0 then return false
+					)
+					
+					-- Вычисляем сырое разрешение
+					local rawW = (baseRes[1] * percent) as integer
+					local rawH = (baseRes[2] * percent) as integer
+					
+					-- Применяем умное округление
+					local smartRes = calculateSmartResolution rawW rawH
+					local newW = smartRes[1]
+					local newH = smartRes[2]
+					
+					-- Устанавливаем новое разрешение
+					the_view.width = newW
+					the_view.height = newH
+					
+					-- Вычисляем реальный процент для отображения
+					local realPercent = newW as float / baseRes[1]
+					
+					-- Формируем имя: "Имя (70% 1920x1280)" — исходное разрешение в скобках
+					-- При 100% скобки убираются
+					local cleanName = getCleanViewName the_view.name
+					local newName = if realPercent == 1 or baseRes[1] <= 0 or baseRes[2] <= 0 then cleanName else (
+						local dp = ((getClosestScaleValue realPercent) * 100) as integer
+						cleanName + " (" + dp as string + "% " + baseRes[1] as string + "x" + baseRes[2] as string + ")"
+					)
+					safeSetViewName the_view newName
+
+					-- Обновляем UI если это активный вид
+					if lst_views.selection > 0 then (
+						local active = batchRenderMgr.GetView lst_views.selection
+						if active == the_view then (
+							renderWidth = newW
+							renderHeight = newH
+							lbl_res.text = newW as string + "x" + newH as string + " (" + ((realPercent * 100) as integer) as string + "%)"
+						)
+					)
+					
+					return true
+				)
+
+				-- Применить масштаб ко всем видам
+				fn applyScaleToAllViews percent = (
+					percent = if percent == undefined then 1 else percent
+					
+					disableSceneRedraw()
+					local count = 0
+					local num = batchRenderMgr.numViews
+					
+					for i = 1 to num do (
+						local v = batchRenderMgr.GetView i
+						if v != undefined and substring v.name 1 5 != "-----" then (
+							if applyScaleToView v percent then count += 1
+						)
+					)
+					
+					enableSceneRedraw()
+					list_views()
+					
+					if lst_views.selection > 0 and get_view_params != undefined then (
+						get_view_params lst_views.selection
+					)
+					
+					return count
+				)
+
+				-- Установить текущее разрешение как новую базу (100%)
+				fn setAsNewBase the_view = (
+					if the_view == undefined then return false
+					
+					-- Получаем текущее разрешение
+					local w = if the_view.overridePreset then the_view.width else renderWidth
+					local h = if the_view.overridePreset then the_view.height else renderHeight
+					
+					if w <= 0 or h <= 0 then (
+						messageBox "Invalid resolution!" title:"Error"
+						return false
+					)
+					
+					-- Сохраняем как новую базу
+					the_view.overridePreset = true
+					the_view.width = w
+					the_view.height = h
+					
+					local cleanName = getCleanViewName the_view.name
+					safeSetViewName the_view cleanName  -- Убираем скобки (100%)
+					
+					-- Обновляем UI
+					if lst_views.selection > 0 then (
+						local active = batchRenderMgr.GetView lst_views.selection
+						if active == the_view then (
+							renderWidth = w
+							renderHeight = h
+							lbl_res.text = w as string + "x" + h as string
+							sld_global_res.value = getSliderIndexByPercent 1
+							lbl_global_res.text = "Global Resolution Scale: 100%"
+						)
+					)
+					
+					list_views()
+					if lst_views.selection > 0 and get_view_params != undefined then (
+						get_view_params lst_views.selection
+					)
+					
+					return true
+				)
+
+				-- Применить процент и установить как новую базу для всех
+				fn applyAndSetAsBaseAllViews percent = (
+					if percent == 1 then (
+						messageBox "Already at 100%" title:"Info"
+						return false
+					)
+					
+					disableSceneRedraw()
+					local count = 0
+					local num = batchRenderMgr.numViews
+					
+					for i = 1 to num do (
+						local v = batchRenderMgr.GetView i
+						if v != undefined and substring v.name 1 5 != "-----" then (
+							if applyScaleToView v percent then (
+								setAsNewBase v
+								count += 1
+							)
+						)
+					)
+					
+					enableSceneRedraw()
+					list_views()
+					
+					if lst_views.selection > 0 and get_view_params != undefined then (
+						get_view_params lst_views.selection
+					)
+					
+					return count
+				)
+
+				/* ============================================================
+				ФУНКЦИЯ ЗАГРУЗКИ ПАРАМЕТРОВ ВИДА (ОБНОВЛЕНА)
+				============================================================ */
+
 				fn get_view_params index =
 				(
 					local the_view = try (batchRenderMgr.GetView index) catch undefined
-					if the_view != undefined then (
-						disableSceneRedraw()
-						txt_1.text = the_view.name
-						local cam  = the_view.camera
-						if isValidNode cam then (
-							owner.roll_Cams.setActiveCam cam
-							-- SET CAM IN LIST
-							findItemInList cam.name owner.roll_Cams.lst_cams
+					if the_view == undefined then return undefined
+					
+					disableSceneRedraw()
+					
+					-- Основные параметры
+					txt_1.text = the_view.name
+					
+					local cam = the_view.camera
+					if isValidNode cam then (
+						owner.roll_Cams.setActiveCam cam
+						local camIdx = FindItem owner.roll_Cams.lst_cams.Items cam.name
+						if camIdx != 0 then owner.roll_Cams.lst_cams.selection = camIdx
+					)
+					
+					-- Путь
+					if the_view.outputFilename != "" then (
+						txt_2.text = getFilenamePath the_view.outputFilename
+						txt_3.text = filenameFromPath the_view.outputFilename
+					) else (
+						txt_2.text = ""
+						txt_3.text = ""
+					)
+					
+					-- Scene State
+					local idx = finditem drdwn_state.items the_view.sceneStateName
+					drdwn_state.selection = if idx == 0 then 1 else idx
+					if the_view.sceneStateName != "" do (
+						local ssp = sceneStateMgr.GetParts the_view.sceneStateName
+						sceneStateMgr.Restore the_view.sceneStateName ssp
+					)
+					
+					-- Разрешение
+					local data = getViewDataFromName the_view.name
+					local baseW = data[2]
+					local baseH = data[3]
+					local percent = data[1]
+					
+					-- Проверка: если реальное разрешение не совпадает с записанным в имени,
+					-- значит пользователь поменял размер вручную — принимаем за новую базу (100%)
+					if baseW > 0 and baseH > 0 and the_view.overridePreset then (
+						local namePercent = percent as float
+						local expectedW = (baseW * namePercent / 100.0) as integer
+						local expectedH = (baseH * namePercent / 100.0) as integer
+						if abs(the_view.width - expectedW) > 16 or abs(the_view.height - expectedH) > 16 then (
+							local cleanName = getCleanViewName the_view.name
+							safeSetViewName the_view cleanName
+							baseW = 0
+							baseH = 0
 						)
-						-- Get the view Path
-						if the_view.outputFilename != "" then (
-							txt_2.text = getFilenamePath the_view.outputFilename
-							txt_3.text = filenameFromPath the_view.outputFilename
-						) else (
-							txt_2.text = ""
-							txt_3.text = ""
-						)
-						-- restore scene state
-						local i = finditem drdwn_state.items the_view.sceneStateName
-						drdwn_state.selection = if i == 0 then 1 else i
-						if the_view.sceneStateName != "" do (
-							local ssp = sceneStateMgr.GetParts the_view.sceneStateName
-							sceneStateMgr.Restore the_view.sceneStateName ssp
-						)
-						-- SET RENDER OUTPUT TO THE VIEW OVERRIDE, USEFUL TO SEE THE CROP FRAME ETC...
-						if the_view.overridePreset then (
-							chk_1.checked = true
-							renderWidth  = the_view.width
-							renderHeight = the_view.height
-							lbl_res.caption = renderWidth as string + " x " + renderHeight as string
-							owner.roll_Cams.get_output_values()
-						) else (
-							lbl_res.caption = "Default"
-							chk_1.checked = false
+					)
+					
+					chk_1.checked = the_view.overridePreset
+					
+					if the_view.overridePreset then (
+						renderWidth = the_view.width
+						renderHeight = the_view.height
+						
+						-- Вычисляем процент с округлением
+						local currentPercent = 100
+						local closestRatio = 1.0
+						if baseW > 0 then (
+							local ratio = the_view.width as float / baseW as float
+							closestRatio = getClosestScaleValue ratio
+							currentPercent = (closestRatio * 100) as integer
 						)
 						
-						enableSceneRedraw()
+						lbl_res.text = renderWidth as string + "x" + renderHeight as string + " (" + currentPercent as string + "%)"
+						
+						-- Обновляем слайдер
+						updateScaleDisplay closestRatio
+						
+						owner.roll_Cams.get_output_values()
+					) else (
+						if baseW > 0 and baseH > 0 then (
+							renderWidth = baseW
+							renderHeight = baseH
+							lbl_res.text = "Default (" + baseW as string + "x" + baseH as string + ")"
+						) else (
+							lbl_res.text = "Default"
+						)
+						updateScaleDisplay 1
 					)
+					
+					enableSceneRedraw()
 					the_view
 				)
-				
+
 				/* LOAD VIEW PROPS */
 				fn view_settings = (
 					local temp_cam = owner.roll_Cams.active_cam
@@ -711,12 +1148,29 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
-				/* UPDATE VIEW FILE PATHS */
+			/* UPDATE VIEW FILE PATHS */
 				fn view_update =
 				(
 					if lst_views.selection != 0 do (
 						local bv = batchRenderMgr.GetView lst_views.selection
 						local any_changed = false
+						
+						-- Обработка чекбокса Override
+						if chk_1.checked then (
+							if not bv.overridePreset then (
+								-- Включаем override: копируем текущие настройки рендера
+								bv.overridePreset = true
+								bv.width = renderWidth
+								bv.height = renderHeight
+								any_changed = true
+							)
+						) else (
+							if bv.overridePreset then (
+								-- Выключаем override: вид переходит на глобальные настройки рендера
+								bv.overridePreset = false
+								any_changed = true
+							)
+						)
 						
 						-- Change the name
 						if bv.name != txt_1.text then (
@@ -724,7 +1178,14 @@ macroScript BUMP_CamMngr
 								messageBox "View Already exist.\nChange name AND try again."
 								return undefined
 							)
-							bv.name = txt_1.text
+						bv.name = txt_1.text
+						-- Синхронизируем override/разрешение из нового имени
+						local syncData = getViewDataFromName bv.name
+						if syncData[2] > 0 and syncData[3] > 0 then (
+							bv.overridePreset = true
+							bv.width = syncData[2]
+							bv.height = syncData[3]
+						)
 							list_views()
 							any_changed = true
 						)
@@ -745,14 +1206,6 @@ macroScript BUMP_CamMngr
 							return undefined
 						)
 						
-						-- Change resolution
-						bv.overridePreset = chk_1.state
-						if chk_1.state do (
-							bv.width  = renderWidth
-							bv.height = renderHeight
-							any_changed = true
-						)
-						
 						-- Change Scene State
 						local selected_scene_state = if drdwn_state.selection > 1 then (
 							drdwn_state.items[drdwn_state.selection]) else ("")
@@ -762,10 +1215,16 @@ macroScript BUMP_CamMngr
 							any_changed = true
 						)
 						
-						if any_changed do close_batch_window()
+						if any_changed do (
+							close_batch_window()
+							list_views()
+							if lst_views.selection > 0 then (
+								get_view_params lst_views.selection
+							)
+						)
 					)
 				)
-							
+
 				on txt_1 entered txt do view_update()
 				on txt_2 entered txt do view_update()
 				on txt_3 entered txt do view_update()
@@ -864,7 +1323,7 @@ macroScript BUMP_CamMngr
 				/* GET BATCH VIEW PARAMS */
 				on lst_views selected index do (
 					active_view = get_view_params index
-					lst_views_arange_buttons_enablig()
+					lst_views_update_buttons()
 				)
 				
 				/* SET VIEW OUTPUT */
@@ -872,6 +1331,8 @@ macroScript BUMP_CamMngr
 				(
 					if view_path != undefined then (
 						new_path = getBitmapSaveFileName filename:view_path
+					) else if txt_3.text != "" then (
+						new_path = getBitmapSaveFileName filename:txt_3.text
 					) else (
 						new_path = getBitmapSaveFileName()
 					)
@@ -879,7 +1340,7 @@ macroScript BUMP_CamMngr
 						view_path = new_path
 						update_Path()
 						if active_view != undefined then (
-							SetViewPath active_view
+							if view_path != undefined then active_view.outputFilename = view_path
 						)
 					)
 				)
@@ -993,6 +1454,59 @@ macroScript BUMP_CamMngr
 							lst_views.selection = sel + 1
 							list_views()
 							active_view = batchRenderMgr.GetView (sel + 1)
+						)
+					)
+				)
+				
+				/* ОБРАБОТЧИКИ ГЛОБАЛЬНОГО РАЗРЕШЕНИЯ */
+				-- Ползунок глобального масштаба
+				on sld_global_res changed val do (
+					-- val это индекс списка процентов
+					local percent = getPercentFromSlider()
+					updateScaleDisplay percent
+
+					if chk_apply_to_all.checked then (
+						applyScaleToAllViews percent
+					) else if lst_views.selection > 0 then (
+						local v = batchRenderMgr.GetView lst_views.selection
+						if v != undefined and substring v.name 1 5 != "-----" then (
+							applyScaleToView v percent
+							list_views()
+							if get_view_params != undefined then get_view_params lst_views.selection
+						)
+					) else (
+						messageBox "Select a view first" title:"Warning"
+					)
+				)
+
+				-- Кнопка "Применить и установить как новую базу"
+				on btn_apply_res pressed do (
+					if lst_views.selection == 0 then (
+						messageBox "Select a view first" title:"Warning"
+						return false
+					)
+					
+					local v = batchRenderMgr.GetView lst_views.selection
+					if v == undefined or substring v.name 1 5 == "-----" then (
+						messageBox "Invalid view selected" title:"Warning"
+						return false
+					)
+					
+					local percent = getPercentFromSlider()
+					if percent == 1 then (
+						messageBox "Current scale is 100%. Nothing to apply." title:"Info"
+						return false
+					)
+					
+					if chk_apply_to_all.checked then (
+						applyAndSetAsBaseAllViews percent
+						-- messageBox "Applied to ALL views and set as new 100%"
+					) else (
+						if applyScaleToView v percent then (
+							setAsNewBase v
+							list_views()
+							if get_view_params != undefined then get_view_params lst_views.selection
+							-- messageBox "Applied and set as new 100% for selected view"
 						)
 					)
 				)
