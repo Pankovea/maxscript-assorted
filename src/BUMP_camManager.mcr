@@ -510,12 +510,14 @@ macroScript BUMP_CamMngr
 					edittext txt_1 "View name" fieldWidth:(roll_w - 35) bold:true labelOnTop:true 
 					label lbl_res "Resolution"
 					edittext txt_2 "Output path" fieldWidth:(roll_w - 80) labelOnTop:true offset:[0,-18]
-					button btn_open_in_explorer "📂" align:#right width:40 offset:[5,-25]
+					button btn_open_in_explorer "📂" align:#right width:40 offset:[5,-25] tooltip:"Open folder in explorer" 
 					edittext txt_3 "File name" fieldWidth:(roll_w - 80) labelOnTop:true
-					button btn_p "..." align:#right width:40 offset:[5,-25] tooltip:"Change path"
+					button btn_p "..." align:#right width:40 offset:[5,-25] tooltip:"Use save file dialog"
 					
-					checkbox chk_1 "Override output size in view" align:#left \
-											tooltip:"Set active render output size as view override"
+				checkbox chk_1 "Override output size in view" align:#left \
+										tooltip:"Set active render output size as view override"
+					dropdownlist drdwn_cam "Camera" Width:(roll_w - 80) items:#("---------------------") across:2
+					button btn_use_active_cam "🎥" align:#right width:40 offset:[5,16] tooltip:"Use active camera" offset:[0,0]
 					dropdownlist drdwn_state "Scene State" items:#("---------------------")
 				)
 				group "Global Resolution Settings" (
@@ -575,6 +577,20 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
+				/* POPULATE CAMERA DROPDOWN */
+				fn sortCams a b = case of (
+						(a.name < b.name): -1
+						(a.name > b.name): 1
+						default: 0
+					)
+				
+				fn list_cameras_for_batch = (
+					local cams = for cam in cameras where (isKindOf cam camera) and not cam.isHidden collect cam
+					qsort cams sortCams
+					local cam_names = for cam in cams collect cam.name
+					drdwn_cam.items = #("---------------------") + cam_names
+				)
+
 				/* LIST BATCH VIEWS */
 				-- [side-effect] Меняет lst_views.items, drdwn_state.items, btn_net_render.checked, UI кнопки
 				fn list_views =
@@ -593,7 +609,9 @@ macroScript BUMP_CamMngr
 					)
 					lst_views.items = col
 					lst_views_update_buttons()
-										
+					
+					list_cameras_for_batch()
+					
 					states_names = for i in 1 to sceneStateMgr.getCount() collect (sceneStateMgr.GetSceneState i)
 					drdwn_state.items = #("---------------------") + states_names
 					
@@ -1012,6 +1030,11 @@ macroScript BUMP_CamMngr
 						owner.roll_Cams.setActiveCam cam
 						local camIdx = FindItem owner.roll_Cams.lst_cams.Items cam.name
 						if camIdx != 0 then owner.roll_Cams.lst_cams.selection = camIdx
+						-- Set camera dropdown
+						local drdwnIdx = findItem drdwn_cam.items cam.name
+						drdwn_cam.selection = if drdwnIdx == 0 then 1 else drdwnIdx
+					) else (
+						drdwn_cam.selection = 1
 					)
 					
 					-- Путь
@@ -1235,6 +1258,52 @@ macroScript BUMP_CamMngr
 				)
 				
 				on drdwn_state selected index do view_update()
+
+				/* CAMERA SELECTION */
+				on drdwn_cam selected index do (
+					if lst_views.selection != 0 and index > 1 then (
+						local bv = batchRenderMgr.GetView lst_views.selection
+						if bv != undefined then (
+							local cam_name = drdwn_cam.items[index]
+							local cam = getNodeByName cam_name
+							if isValidNode cam and (isKindOf cam camera) then (
+								close_batch_window()
+								bv.camera = cam
+								-- Update active camera in viewport
+								owner.roll_Cams.setActiveCam cam
+								list_views()
+								lst_views.selection = lst_views.selection
+							)
+						)
+					)
+				)
+				
+			/* USE ACTIVE CAMERA */
+			on btn_use_active_cam pressed do (
+				if lst_views.selection != 0 then (
+					local bv = batchRenderMgr.GetView lst_views.selection
+					if bv != undefined then (
+						local cam = getActiveCamera()
+						if cam == undefined then (
+							for i in 1 to viewport.numViews where cam == undefined do (
+								local vc = viewport.getCamera index:i
+								if vc != undefined and isValidNode vc and (isKindOf vc camera) do cam = vc
+							)
+						)
+						if isValidNode cam and (isKindOf cam camera) then (
+							close_batch_window()
+							bv.camera = cam
+							owner.roll_Cams.active_cam = cam
+							owner.roll_Cams.change_active()
+							-- Update dropdown
+							local drdwnIdx = findItem drdwn_cam.items cam.name
+							drdwn_cam.selection = if drdwnIdx == 0 then 1 else drdwnIdx
+							list_views()
+							lst_views.selection = lst_views.selection
+						)
+					)
+				)
+			)
 				
 				on btn_open_in_explorer pressed do (
 					if txt_2.text != "" then (
@@ -1384,6 +1453,9 @@ macroScript BUMP_CamMngr
 					--	view_path   = undefined
 					active_view = undefined					
 					list_views()
+					owner.roll_Cams.relist_cams()
+					owner.roll_Cams.change_active()
+					if lst_views.selection > 0 do get_view_params lst_views.selection
 				)
 				
 				/* OPEN RENDER BATCH */
