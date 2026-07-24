@@ -448,7 +448,7 @@ macroScript BUMP_CamMngr
 					set_output_ratio val
 					-- save values to camera
 					set_cam_res active_cam spn_w.value spn_h.value val
-					-- change_active()		
+					-- change_active()
 				)			
 				/* IMAGE RATIO PRESETS */
 				fn preset val =
@@ -509,16 +509,18 @@ macroScript BUMP_CamMngr
 				label lbl_separator_1 "" offset:[0, -5]
 				group "Edit batch view" (
 					edittext txt_1 "View name" fieldWidth:(roll_w - 35) bold:true labelOnTop:true 
-					label lbl_res "Resolution"
-					edittext txt_2 "Output path" fieldWidth:(roll_w - 80) labelOnTop:true offset:[0,-18]
+					edittext txt_2 "Output path" fieldWidth:(roll_w - 80) labelOnTop:true
 					button btn_open_in_explorer "Open" align:#right width:40 offset:[5,-25] tooltip:"Open folder in explorer" 
 					edittext txt_3 "File name" fieldWidth:(roll_w - 80) labelOnTop:true
 					button btn_p "..." align:#right width:40 offset:[5,-25] tooltip:"Use save file dialog"
 					
 					checkbox chk_1 "Override output size in view" align:#left \
 										tooltip:"Set active render output size as view override"
-					dropdownlist drdwn_cam "Camera" Width:(roll_w - 80) items:#("---------------------") across:2
-					button btn_use_active_cam "🎥" align:#right width:40 offset:[5,16] tooltip:"Use active camera" offset:[0,0]
+					label lbl_res "Resolution" across:2 align:#left offset:[65,3]
+					button btn_use_current_res "📐" align:#right width:40 offset:[5,0]\
+						tooltip:"Use current render resolution.\nChange resolution on the Camera rollout."
+					dropdownlist drdwn_cam "Camera" Width:(roll_w - 80) items:#("---------------------") across:2 offset:[0,-23]
+					button btn_use_active_cam "🎥" align:#right width:40 offset:[5,-5] tooltip:"Use active camera"
 					dropdownlist drdwn_state "Scene State" items:#("---------------------")
 					button btn_v "➕ Add View to batch" height:25 align:#left
 				)
@@ -553,6 +555,7 @@ macroScript BUMP_CamMngr
 				-- [side-effect] Меняет enabled/caption у btn_up, btn_down, btn_togleEnabled, btn_rem
 				fn lst_views_update_buttons = (
 					index = lst_views.selection
+					
 					if lst_views.selection == 0 or lst_views.items.count <= 1 then (
 						btn_up.enabled = false
 						btn_down.enabled = false
@@ -566,6 +569,7 @@ macroScript BUMP_CamMngr
 						btn_up.enabled = true
 						btn_down.enabled = true
 					)
+					
 					if index > 0 then (
 						local the_view = batchRenderMgr.GetView index
 						btn_togleEnabled.enabled = true
@@ -853,12 +857,12 @@ macroScript BUMP_CamMngr
 				)
 
 					
-			/* ============================================================
-			   ОСНОВНЫЕ ФУНКЦИИ РАБОТЫ С РАЗРЕШЕНИЕМ
-			   ============================================================ */
+				---------------------------------------------------------------
+				-- ОСНОВНЫЕ ФУНКЦИИ РАБОТЫ С РАЗРЕШЕНИЕМ
+				---------------------------------------------------------------
 
-			-- Применить масштаб к одному виду с умным округлением
-			-- [side-effect] Меняет the_view.width/height/name, renderWidth/renderHeight, lbl_res.text
+				-- Применить масштаб к одному виду с умным округлением
+				-- [side-effect] Меняет the_view.width/height/name, renderWidth/renderHeight, lbl_res.text
 				fn applyScaleToView the_view percent = (
 					if the_view == undefined then return false
 					
@@ -1014,9 +1018,9 @@ macroScript BUMP_CamMngr
 					return count
 				)
 
-				/* ============================================================
-				ФУНКЦИЯ ЗАГРУЗКИ ПАРАМЕТРОВ ВИДА (ОБНОВЛЕНА)
-				============================================================ */
+				------------------------------------------------------------
+				-- ФУНКЦИЯ ЗАГРУЗКИ ПАРАМЕТРОВ ВИДА (ОБНОВЛЕНА)
+				------------------------------------------------------------
 
 				fn get_view_params index =
 				(
@@ -1279,39 +1283,61 @@ macroScript BUMP_CamMngr
 								-- Update active camera in viewport
 								owner.roll_Cams.setActiveCam cam
 								list_views()
-								lst_views.selection = lst_views.selection
+								--lst_views.selection = lst_views.selection
 							)
 						)
 					)
 				)
 				
-			/* USE ACTIVE CAMERA */
-			on btn_use_active_cam pressed do (
-				if lst_views.selection != 0 then (
-					local bv = batchRenderMgr.GetView lst_views.selection
-					if bv != undefined then (
-						local cam = getActiveCamera()
-						if cam == undefined then (
-							for i in 1 to viewport.numViews where cam == undefined do (
-								local vc = viewport.getCamera index:i
-								if vc != undefined and isValidNode vc and (isKindOf vc camera) do cam = vc
+				/* USE ACTIVE CAMERA */
+				on btn_use_active_cam pressed do (
+					if lst_views.selection != 0 then (
+						local bv = batchRenderMgr.GetView lst_views.selection
+						if bv != undefined then (
+							local cam = getActiveCamera()
+							if cam == undefined then (
+								for i in 1 to viewport.numViews where cam == undefined do (
+									local vc = viewport.getCamera index:i
+									if vc != undefined and isValidNode vc and (isKindOf vc camera) do cam = vc
+								)
+							)
+							if isValidNode cam and (isKindOf cam camera) then (
+								close_batch_window()
+								bv.camera = cam
+								owner.roll_Cams.active_cam = cam
+								owner.roll_Cams.change_active()
+								-- Update dropdown
+								local drdwnIdx = findItem drdwn_cam.items cam.name
+								drdwn_cam.selection = if drdwnIdx == 0 then 1 else drdwnIdx
+								list_views()
+								--lst_views.selection = lst_views.selection
 							)
 						)
-						if isValidNode cam and (isKindOf cam camera) then (
+					)
+				)
+				
+				/* USE CURRENT RENDER RESOLUTION */
+				on btn_use_current_res pressed do (
+					if lst_views.selection != 0 then (
+						local bv = batchRenderMgr.GetView lst_views.selection
+						if bv != undefined then (
 							close_batch_window()
-							bv.camera = cam
-							owner.roll_Cams.active_cam = cam
-							owner.roll_Cams.change_active()
-							-- Update dropdown
-							local drdwnIdx = findItem drdwn_cam.items cam.name
-							drdwn_cam.selection = if drdwnIdx == 0 then 1 else drdwnIdx
+							bv.overridePreset = true
+							chk_1.checked = true
+							bv.width = renderWidth
+							bv.height = renderHeight
+							lbl_res.text = bv.width as string + "x" + bv.height as string
+							sld_global_res.text = "Scale:  100%"
+							sld_global_res.value = getSliderIndexByPercent 1
+							local cleanName = getCleanViewName bv.name
+							local oldData = getViewDataFromName bv.name
+							safeSetViewName bv cleanName
 							list_views()
-							lst_views.selection = lst_views.selection
+							-- lst_views.selection = lst_views.selection
 						)
 					)
 				)
-			)
-				
+
 				on btn_open_in_explorer pressed do (
 					if txt_2.text != "" then (
 						if doesfileexist txt_2.text then (
