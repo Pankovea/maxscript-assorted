@@ -491,44 +491,46 @@ macroScript BUMP_CamMngr
 				local roll_w = 250
 				local owner = if owner != undefined then owner
 				--------------------------------
-				listbox lst_views "Batch Views" height:20  offset:[-10,0]
+				button btn_b "Batch Views" width:80 height:25 align:#left offset:[-10,0]
+				button btn_refresh "🔄️ Refresh" width:(roll_w - 120) height:25 align:#left offset:[65,-30] tooltip:"Update the views list" 
+				listbox lst_views "" height:20  offset:[-10,0]
 				
 				button btn_togleEnabled "☑️" align:#right width:24 height:25 tooltip:"Toggle enabled" offset:[14,-272]
-				button btn_up "↑" height:55 align:#right tooltip:"Move view up" offset:[14,37]
+				button btn_togleEnabledAll "✓✓" align:#right width:24 height:25 tooltip:"Toggle enabled ALL" offset:[14,0]
+				button btn_up "↑" height:55 align:#right tooltip:"Move view up" offset:[14,2]
 				button btn_add_sep "—" width:24 align:#right tooltip:"Add separator" offset:[14,0]
 				button btn_down "↓"  height:55 align:#right tooltip:"Move view down" offset:[14,0]
-				button btn_dup "📋" width:24 height:25 align:#right offset:[14,0] tooltip:"Duplicate view" 
+				button btn_dup "📋" width:24 height:25 align:#right offset:[14,2] tooltip:"Duplicate view" 
 				button btn_rem "❌" width:24 height:25 align:#right offset:[14,0]
 				
-				button btn_refresh "🔄️ Refresh" height:25 width:(roll_w - 40) align:#left offset:[-10,0] tooltip:"Update the views list" 
+				checkbutton btn_net_render "🕸️ Net" width:80 height:25 align:#left offset:[-10,0]
+				button btn_render "🫖 Render" height:25 width:(roll_w - 120) align:#left offset:[65,-30]
 				
-				checkbutton btn_net_render "🕸️ Net" width:50 height:25 align:#left offset:[-10,0]
-				button btn_render "🫖 Render" height:25 width:(roll_w - 90) align:#left offset:[40,-30]
-				
-				
+				label lbl_separator_1 "" offset:[0, -5]
 				group "Edit batch view" (
 					edittext txt_1 "View name" fieldWidth:(roll_w - 35) bold:true labelOnTop:true 
 					label lbl_res "Resolution"
 					edittext txt_2 "Output path" fieldWidth:(roll_w - 80) labelOnTop:true offset:[0,-18]
-					button btn_open_in_explorer "📂" align:#right width:40 offset:[5,-25] tooltip:"Open folder in explorer" 
+					button btn_open_in_explorer "Open" align:#right width:40 offset:[5,-25] tooltip:"Open folder in explorer" 
 					edittext txt_3 "File name" fieldWidth:(roll_w - 80) labelOnTop:true
 					button btn_p "..." align:#right width:40 offset:[5,-25] tooltip:"Use save file dialog"
 					
-				checkbox chk_1 "Override output size in view" align:#left \
+					checkbox chk_1 "Override output size in view" align:#left \
 										tooltip:"Set active render output size as view override"
 					dropdownlist drdwn_cam "Camera" Width:(roll_w - 80) items:#("---------------------") across:2
 					button btn_use_active_cam "🎥" align:#right width:40 offset:[5,16] tooltip:"Use active camera" offset:[0,0]
 					dropdownlist drdwn_state "Scene State" items:#("---------------------")
+					button btn_v "➕ Add View to batch" height:25 align:#left
 				)
-				group "Global Resolution Settings" (
-					label lbl_global_res "Global Resolution Scale: 100%" offset:[0,5]
-					slider sld_global_res "Scale" range:[1,7,4] type:#integer ticks:7 offset:[0,-5]
-					checkbox chk_apply_to_all "Apply to all views" checked:true offset:[0,5]
-					button btn_apply_res "Apply to Selected View" width:(roll_w - 40) height:25 offset:[0,5]
-					button btn_set_folder "Set output folder for all views" width:(roll_w - 40) height:25 offset:[0,5]
+				
+				label lbl_separator_2 "" offset:[0, -5]
+				group "Global Settings" (
+					slider sld_global_res "Scale:  100%" range:[1,7,4] type:#integer ticks:7 across:2
+					checkbox chk_affect_to_all "Affect ALL views" checked:true offset:[0,-2]
+					button btn_apply_res "Apply" height:25 width:120 align:#left offset:[100,-35]
+					
+					button btn_set_folder "📂 Set output folder for all views" width:(roll_w - 40) height:25 offset:[0,5]
 				)
-				button btn_v "➕ Add View to batch" width:(roll_w - 70) height:25 align:#left --offset:[0,13]
-				button btn_b "Open Batch window" width:(roll_w - 70) height:25 align:#left
 				--------------------------------
 				local batch_view
 				local view_name   = ""
@@ -765,7 +767,7 @@ macroScript BUMP_CamMngr
 					-- Округляем до ближайшего значения из списка
 					local displayPercent = getClosestScaleValue percent
 					
-					lbl_global_res.text = "Global Resolution Scale: " + ((displayPercent * 100) as integer) as string + "%"
+					sld_global_res.text = "Scale: " + ((displayPercent * 100) as integer) as string + "%"
 					
 					-- Устанавливаем слайдер на нужный индекс
 					local idx = getSliderIndexByPercent displayPercent
@@ -813,7 +815,7 @@ macroScript BUMP_CamMngr
 					local num = batchRenderMgr.numViews
 					for i = 1 to num do (
 						local v = batchRenderMgr.GetView i
-						if v != excludeView and v.name == viewName then return false
+						if v.name == viewName and v.name != excludeView then return false
 					)
 					return true
 				)
@@ -969,7 +971,7 @@ macroScript BUMP_CamMngr
 							renderHeight = h
 							lbl_res.text = w as string + "x" + h as string
 							sld_global_res.value = getSliderIndexByPercent 1
-							lbl_global_res.text = "Global Resolution Scale: 100%"
+							sld_global_res.text = "Scale: 100%"
 						)
 					)
 					
@@ -1156,20 +1158,24 @@ macroScript BUMP_CamMngr
 				/* ADD VIEW */
 				fn view_add =
 				(
-					close_batch_window()
 					local temp_cam = owner.roll_Cams.active_cam
 					if temp_cam != undefined then (
-						if (batchRenderMgr.FindView txt_1.text) == 0 then (
-							local new_view = batchRenderMgr.CreateView temp_cam
-							if (new_view.overridePreset = chk_1.state) then (
-								new_view.width  = renderWidth
-								new_view.height = renderHeight
-							)
-							new_view.name = txt_1.text
-							new_view.outputFilename = view_path
-							list_views()
-						) else messageBox "View Already exist.\nChange name AND try again."
-					)
+						close_batch_window()
+						local view_name = if txt_1.text == "" then "View" else txt_1.text
+
+						if not (isViewNameUnique view_name "") do (
+							view_name = getUniqueViewName view_name ""
+						)
+
+						local new_view = batchRenderMgr.CreateView temp_cam
+						if (new_view.overridePreset = chk_1.state) then (
+							new_view.width  = renderWidth
+							new_view.height = renderHeight
+						)
+						new_view.name = view_name
+						new_view.outputFilename = view_path
+						list_views()
+					) else messageBox "Select the camera in the Camera rollout"
 				)
 				
 			/* UPDATE VIEW FILE PATHS */
@@ -1474,6 +1480,23 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
+				/* TOGGLE ENABLED ALL*/
+				on btn_togleEnabledAll pressed do (
+					local num = batchRenderMgr.numViews
+					local enb = 0
+					local dsb = 0
+					for i=1 to num collect (
+						if (batchRenderMgr.GetView i).enabled then enb += 1 else dsb += 1
+					)
+					-- Если больше включёныйх, то всё выключить
+					local action = not (enb > dsb)
+					for i=1 to num collect (
+						local the_view = batchRenderMgr.GetView i
+						the_view.enabled = action
+					)
+					list_views()
+				)
+				
 				/* MOVE VIEW UP */
 				on btn_up pressed do
 				(
@@ -1538,7 +1561,7 @@ macroScript BUMP_CamMngr
 					local percent = getPercentFromSlider()
 					updateScaleDisplay percent
 
-					if chk_apply_to_all.checked then (
+					if chk_affect_to_all.checked then (
 						applyScaleToAllViews percent
 					) else if lst_views.selection > 0 then (
 						local v = batchRenderMgr.GetView lst_views.selection
@@ -1571,7 +1594,7 @@ macroScript BUMP_CamMngr
 						return false
 					)
 					
-					if chk_apply_to_all.checked then (
+					if chk_affect_to_all.checked then (
 						applyAndSetAsBaseAllViews percent
 						-- messageBox "Applied to ALL views and set as new 100%"
 					) else (
