@@ -525,6 +525,7 @@ macroScript BUMP_CamMngr
 					slider sld_global_res "Scale" range:[1,7,4] type:#integer ticks:7 offset:[0,-5]
 					checkbox chk_apply_to_all "Apply to all views" checked:true offset:[0,5]
 					button btn_apply_res "Apply to Selected View" width:(roll_w - 40) height:25 offset:[0,5]
+					button btn_set_folder "Set output folder for all views" width:(roll_w - 40) height:25 offset:[0,5]
 				)
 				button btn_v "➕ Add View to batch" width:(roll_w - 70) height:25 align:#left --offset:[0,13]
 				button btn_b "Open Batch window" width:(roll_w - 70) height:25 align:#left
@@ -1583,6 +1584,31 @@ macroScript BUMP_CamMngr
 					)
 				)
 				
+				/* SET OUTPUT FOLDER FOR ALL VIEWS */
+				on btn_set_folder pressed do (
+					local folder = getSavePath caption:"Select output folder"
+					if folder == undefined then return false
+					close_batch_window()
+					local count = 0
+					local num = batchRenderMgr.numViews
+					for i = 1 to num do (
+						local v = batchRenderMgr.GetView i
+						if v != undefined and substring v.name 1 5 != "-----" then (
+							local fname = filenameFromPath v.outputFilename
+							if fname != "" then (
+								v.outputFilename = pathConfig.appendPath folder fname
+								count += 1
+							)
+						)
+					)
+					if count > 0 then (
+						list_views()
+						if lst_views.selection > 0 then (
+							get_view_params lst_views.selection
+						)
+					)
+				)
+
 				on roll_Batch close do (
 					-- Save position to INI
 					if roll_Batch.open then (
